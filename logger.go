@@ -86,10 +86,11 @@ func (logger *Logger) ConfigDidLoad(ctx context.Context) {
 
 // Trace logger with requestId and uid
 func (logger *Logger) Trace(ctx context.Context) *zap.SugaredLogger {
-	uid := ctx.Value(logger.TraceUID)
-	requestID := ctx.Value(logger.TraceRequestID)
+	return trace(ctx, logger)
+}
 
-	return logger.SugaredLogger.With("requestId", requestID).With("uid", uid)
+func Trace(ctx context.Context) *zap.SugaredLogger {
+	return trace(ctx, Default)
 }
 
 func DPanic(args ...interface{}) {
@@ -190,4 +191,12 @@ func Warnw(msg string, keysAndValues ...interface{}) {
 
 func With(args ...interface{}) *zap.SugaredLogger {
 	return global.With(args...)
+}
+
+func trace(ctx context.Context, logger *Logger) *zap.SugaredLogger {
+	uid := ctx.Value(logger.TraceUID)
+	requestID := ctx.Value(logger.TraceRequestID)
+
+	// return logger.SugaredLogger.Named(fmt.Sprintf("[%s][%s]", uid, requestID))
+	return logger.SugaredLogger.With("uid", uid).With("requestId", requestID)
 }
