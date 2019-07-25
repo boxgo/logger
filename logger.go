@@ -2,19 +2,22 @@ package logger
 
 import (
 	"context"
+	"os"
 	"sync"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 type (
 	// Logger logger option
 	Logger struct {
-		Level          string `config:"level" help:"Levels: debug,info,warn,error,dpanic,panic,fatal"`
-		Encoding       string `config:"encoding" help:"PS: console or json"`
-		TraceUID       string `config:"traceUid" help:"Name as trace uid in context"`
-		TraceRequestID string `config:"traceRequestId" help:"Name as trace requestId in context"`
-		CallerSkip     int    `config:"callerSkip" help:"AddCallerSkip increases the number of callers skipped by caller annotation"`
+		Level          string   `config:"level" help:"Levels: debug,info,warn,error,dpanic,panic,fatal"`
+		Encoding       string   `config:"encoding" help:"PS: console or json"`
+		TraceUID       string   `config:"traceUid" help:"Name as trace uid in context"`
+		TraceRequestID string   `config:"traceRequestId" help:"Name as trace requestId in context"`
+		CallerSkip     int      `config:"callerSkip" help:"AddCallerSkip increases the number of callers skipped by caller annotation"`
+		FilterSpecs    []string `config:"filterSpecs" helper:"filter rules, split by ==>. eg: old ==> new`
 		*zap.SugaredLogger
 	}
 )
@@ -24,6 +27,7 @@ var (
 	Default = &Logger{}
 	global  = Default
 	once    = sync.Once{}
+	locker  = sync.Mutex{}
 )
 
 func init() {
@@ -57,21 +61,12 @@ func (logger *Logger) ConfigWillLoad(context.Context) {
 		logger.TraceRequestID = "requestId"
 	}
 
-	log, err := simpleConfig(logger.Level, logger.Encoding).Build(
-		zap.AddCallerSkip(logger.CallerSkip),
-	)
-	if err != nil {
-		panic(err)
-	}
-
-	defer log.Sync()
-
-	logger.SugaredLogger = log.Sugar()
+	logger.apply()
 }
 
 // ConfigDidLoad did load
 func (logger *Logger) ConfigDidLoad(ctx context.Context) {
-	logger.ConfigWillLoad(ctx)
+	logger.apply()
 
 	once.Do(func() {
 		global = &Logger{
@@ -82,6 +77,35 @@ func (logger *Logger) ConfigDidLoad(ctx context.Context) {
 			SugaredLogger:  Default.SugaredLogger.Desugar().WithOptions(zap.AddCallerSkip(1)).Sugar(),
 		}
 	})
+}
+
+func (logger *Logger) apply() {
+	locker.Lock()
+	defer locker.Unlock()
+
+	cfg := simpleConfig(logger.Level, logger.Encoding)
+	log, err := cfg.Build(
+		zap.AddCallerSkip(logger.CallerSkip),
+		zap.WrapCore(func(c zapcore.Core) zapcore.Core {
+			var ws *filterWriter
+			var enc = zapcore.NewConsoleEncoder(cfg.EncoderConfig)
+
+			if logger.Level == "debug" || logger.Level == "info" || logger.Level == "warn" {
+				ws = newFilterWriter(os.Stdout, newFilterBySlice(logger.FilterSpecs)...)
+			} else {
+				ws = newFilterWriter(os.Stderr, newFilterBySlice(logger.FilterSpecs)...)
+			}
+
+			return zapcore.NewCore(enc, ws, cfg.Level)
+		}),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	defer log.Sync()
+
+	logger.SugaredLogger = log.Sugar()
 }
 
 // Trace logger with requestId and uid
