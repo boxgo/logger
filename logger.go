@@ -225,9 +225,14 @@ func With(args ...interface{}) *zap.SugaredLogger {
 }
 
 func trace(ctx context.Context, logger *Logger) *zap.SugaredLogger {
-	uid := ctx.Value(logger.TraceUID)
-	requestID := ctx.Value(logger.TraceRequestID)
+	var uid, requestID string
+
+	if uidStr, ok := ctx.Value(logger.TraceUID).(string); ok {
+		uid = uidStr
+	}
+	if requestIDStr, ok := ctx.Value(logger.TraceRequestID).(string); ok {
+		requestID = requestIDStr
+	}
 
 	return logger.SugaredLogger.Named(fmt.Sprintf("[%s][%s]", uid, requestID))
-	// return logger.SugaredLogger.With("uid", uid).With("requestId", requestID)
 }
