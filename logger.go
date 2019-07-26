@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sync"
 
@@ -17,7 +18,7 @@ type (
 		TraceUID       string   `config:"traceUid" help:"Name as trace uid in context"`
 		TraceRequestID string   `config:"traceRequestId" help:"Name as trace requestId in context"`
 		CallerSkip     int      `config:"callerSkip" help:"AddCallerSkip increases the number of callers skipped by caller annotation"`
-		FilterSpecs    []string `config:"filterSpecs" helper:"filter rules, split by ==>. eg: old ==> new`
+		FilterSpecs    []string `config:"filterSpecs" help:"filter rules, split by ==>. eg: old ==> new"`
 		*zap.SugaredLogger
 	}
 )
@@ -88,7 +89,13 @@ func (logger *Logger) apply() {
 		zap.AddCallerSkip(logger.CallerSkip),
 		zap.WrapCore(func(c zapcore.Core) zapcore.Core {
 			var ws *filterWriter
-			var enc = zapcore.NewConsoleEncoder(cfg.EncoderConfig)
+			var enc zapcore.Encoder
+
+			if logger.Encoding == "console" {
+				enc = zapcore.NewConsoleEncoder(cfg.EncoderConfig)
+			} else {
+				enc = zapcore.NewJSONEncoder(cfg.EncoderConfig)
+			}
 
 			if logger.Level == "debug" || logger.Level == "info" || logger.Level == "warn" {
 				ws = newFilterWriter(os.Stdout, newFilterBySlice(logger.FilterSpecs)...)
@@ -221,6 +228,6 @@ func trace(ctx context.Context, logger *Logger) *zap.SugaredLogger {
 	uid := ctx.Value(logger.TraceUID)
 	requestID := ctx.Value(logger.TraceRequestID)
 
-	// return logger.SugaredLogger.Named(fmt.Sprintf("[%s][%s]", uid, requestID))
-	return logger.SugaredLogger.With("uid", uid).With("requestId", requestID)
+	return logger.SugaredLogger.Named(fmt.Sprintf("[%s][%s]", uid, requestID))
+	// return logger.SugaredLogger.With("uid", uid).With("requestId", requestID)
 }
