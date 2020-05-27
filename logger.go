@@ -17,6 +17,9 @@ type (
 		Encoding       string   `config:"encoding" help:"PS: console or json"`
 		TraceUID       string   `config:"traceUid" help:"Name as trace uid in context"`
 		TraceRequestID string   `config:"traceRequestId" help:"Name as trace requestId in context"`
+		TraceSpanID    string   `config:"traceSpanId" help:"Name as trace spanId in context"`
+		TraceBizID     string   `config:"traceBizId" help:"Name as trace spanId in context"`
+		CallerKey      string   `config:"callerKey" help:"caller key in log"`
 		CallerSkip     int      `config:"callerSkip" help:"AddCallerSkip increases the number of callers skipped by caller annotation"`
 		FilterSpecs    []string `config:"filterSpecs" help:"filter rules, split by ==>. eg: old ==> new"`
 		*zap.SugaredLogger
@@ -61,6 +64,12 @@ func (logger *Logger) ConfigWillLoad(context.Context) {
 	if logger.TraceRequestID == "" {
 		logger.TraceRequestID = "requestId"
 	}
+	if logger.TraceSpanID == "" {
+		logger.TraceSpanID = "traceSpanId"
+	}
+	if logger.TraceBizID == "" {
+		logger.TraceBizID = "traceBizId"
+	}
 
 	logger.apply()
 }
@@ -84,7 +93,31 @@ func (logger *Logger) apply() {
 	locker.Lock()
 	defer locker.Unlock()
 
-	cfg := simpleConfig(logger.Level, logger.Encoding)
+	cfg := &zap.Config{
+		Development: false,
+		Level:       newAtomicLevelAt(logger.Level),
+		Encoding:    logger.Encoding,
+		Sampling: &zap.SamplingConfig{
+			Initial:    100,
+			Thereafter: 100,
+		},
+		EncoderConfig: zapcore.EncoderConfig{
+			TimeKey:        "time",
+			LevelKey:       "level",
+			NameKey:        "logger",
+			MessageKey:     "msg",
+			StacktraceKey:  "stacktrace",
+			CallerKey:      logger.CallerKey,
+			LineEnding:     zapcore.DefaultLineEnding,
+			EncodeLevel:    zapcore.CapitalLevelEncoder,
+			EncodeTime:     zapcore.ISO8601TimeEncoder,
+			EncodeDuration: zapcore.SecondsDurationEncoder,
+			EncodeCaller:   zapcore.ShortCallerEncoder,
+		},
+		OutputPaths:      []string{"stderr"},
+		ErrorOutputPaths: []string{"stderr"},
+	}
+
 	log, err := cfg.Build(
 		zap.AddCallerSkip(logger.CallerSkip),
 		zap.WrapCore(func(c zapcore.Core) zapcore.Core {
@@ -115,9 +148,17 @@ func (logger *Logger) apply() {
 	logger.SugaredLogger = log.Sugar()
 }
 
+func (logger *Logger) TraceRaw(ctx context.Context) *zap.Logger {
+	return trace(ctx, logger).Desugar()
+}
+
 // Trace logger with requestId and uid
 func (logger *Logger) Trace(ctx context.Context) *zap.SugaredLogger {
 	return trace(ctx, logger)
+}
+
+func TraceRaw(ctx context.Context) *zap.Logger {
+	return trace(ctx, Default).Desugar()
 }
 
 func Trace(ctx context.Context) *zap.SugaredLogger {
@@ -225,7 +266,7 @@ func With(args ...interface{}) *zap.SugaredLogger {
 }
 
 func trace(ctx context.Context, logger *Logger) *zap.SugaredLogger {
-	var uid, requestID string
+	var uid, requestID, spanId, bizId string
 
 	if uidStr, ok := ctx.Value(logger.TraceUID).(string); ok {
 		uid = uidStr
@@ -233,6 +274,12 @@ func trace(ctx context.Context, logger *Logger) *zap.SugaredLogger {
 	if requestIDStr, ok := ctx.Value(logger.TraceRequestID).(string); ok {
 		requestID = requestIDStr
 	}
+	if spanIdStr, ok := ctx.Value(logger.TraceSpanID).(string); ok {
+		spanId = spanIdStr
+	}
+	if bizIdStr, ok := ctx.Value(logger.TraceBizID).(string); ok {
+		bizId = bizIdStr
+	}
 
-	return logger.SugaredLogger.Named(fmt.Sprintf("[%s][%s]", uid, requestID))
+	return logger.SugaredLogger.Named(fmt.Sprintf("[%s][%s][%s][%s]", uid, requestID, spanId, bizId))
 }
